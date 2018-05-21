@@ -25,6 +25,7 @@ int listenfd;
 
 std::map<std::string, std::string> contentTypes;
 
+// function to get current time in correct HTTP date format
 std::string currentTime() {
     auto currentTime = std::chrono::system_clock::to_time_t( std::chrono::system_clock::now() );
     auto t = gmtime(&currentTime);
@@ -46,6 +47,7 @@ std::string compress(const std::string& input, int compressionlevel = Z_BEST_COM
     z_stream zs;
     memset(&zs, 0, sizeof(zs));
 
+    // config gzip setting
     if (deflateInit2(&zs, compressionlevel, Z_DEFLATED, 31, 8, Z_DEFAULT_STRATEGY) != Z_OK) {
         throw(std::runtime_error("deflateInit failed while compressing."));
     }
@@ -53,7 +55,6 @@ std::string compress(const std::string& input, int compressionlevel = Z_BEST_COM
     // set the z_stream's input
     zs.next_in = (Bytef*) input.data();
     zs.avail_in = (uint) input.size();
-
 
     int ret;
     char outbuffer[32768];
@@ -83,14 +84,14 @@ std::string compress(const std::string& input, int compressionlevel = Z_BEST_COM
     return outstring;
 }
 
-//receive requests
+// receive requests
 std::string recvice(int connection) {
     int bytesRecived = 0;
     char reciveBuffer[BUFFERSIZE] = {0};
     std::string result = "";
     do {
         bytesRecived = recv(connection, reciveBuffer, BUFFERSIZE - 1, 0);
-        reciveBuffer[bytesRecived] = '\0'; //end of cstd::string
+        reciveBuffer[bytesRecived] = '\0'; // end of cstd::string
         result += reciveBuffer;
     } while(bytesRecived >= 99);
 
@@ -103,7 +104,6 @@ void sendResponse(int connection, std::string response) {
 }
 
 void handleRequest(int connection) {
-    // TODO: analyze request
     std::string requestMessage = recvice(connection);
     std::string messageHeader = "";
     std::string messageBody = "";
@@ -115,7 +115,7 @@ void handleRequest(int connection) {
 
     // seperate message header and message body
     size_t endOfMessageHeader = requestMessage.find("\r\n\r\n");
-    if(endOfMessageHeader != std::string::npos){ //can find CRLF -> have body
+    if(endOfMessageHeader != std::string::npos){ // can find CRLF -> have body
         messageHeader = requestMessage.substr(0,endOfMessageHeader);
         messageBody = requestMessage.substr(endOfMessageHeader + 4);
     } else {
@@ -138,14 +138,14 @@ void handleRequest(int connection) {
     } else {
         requestLine = messageHeader;
     }
-    //=====analyzing the status Line=====
+    // =====analyzing the status Line=====
     // debug
     if(DEBUG) {
         std::cout << "Status line" << std::endl;
         std::cout << requestLine << std::endl;
     }
 
-    //check GET method
+    // check GET method
     std::string method = "";
     std::string pathway = "";
     size_t checkStatus = requestLine.find(" ");
@@ -170,7 +170,7 @@ void handleRequest(int connection) {
         close(connection);
         return;
     }
-    //=========extracting URI=========
+    // =========extracting URI=========
     std::string URL = "";
     std::string HTTPVersion = "";
     size_t path = pathway.find(" ");
@@ -228,11 +228,11 @@ void handleRequest(int connection) {
 
     } while(requestHeaders != "");
 
-    //Prepare the file
+    // Prepare the file
     bool validPath = false;
     std::string filePath = URL;
 
-    //check valid pathway
+    // check valid pathway
     while(!validPath) {
         if(filePath.substr(0,3)=="../"){
             filePath = filePath.substr(3);
@@ -242,12 +242,12 @@ void handleRequest(int connection) {
         }
     }
 
-    //broswer default behaviour
+    // broswer default behaviour
     if(filePath.length() == 1 && filePath[0] == '/'){
         filePath += "index.html";
     }
 
-    //convert to relative path to the doc root of the server
+    // convert to relative path to the doc root of the server
     if(filePath[0] == '/') {
         filePath = "." + filePath;
     }
@@ -262,7 +262,6 @@ void handleRequest(int connection) {
 
     std::string contentType = "";
     bool binaryFile = false;
-    //TODO : change to if
     auto contentTypeIterator = contentTypes.find(fileExtension);
     if(contentTypeIterator != contentTypes.end()) {
         contentType = contentTypeIterator->second;
@@ -274,7 +273,7 @@ void handleRequest(int connection) {
         binaryFile = true;
     }
 
-    //check the existence of the file(s)
+    // check the existence of the file(s)
     auto flags = std::ifstream::in;
     if(binaryFile) {
         flags |= std::ifstream::binary;
@@ -282,7 +281,7 @@ void handleRequest(int connection) {
 
     std::ifstream f(filePath.c_str(), flags);
 
-    //if file not exist
+    // if file not exist
     if(!f.good()){
         std::string response = "HTTP/1.1 404 Not found\r\n";
         response += "Date: " + currentTime() + "\r\n";
@@ -295,8 +294,10 @@ void handleRequest(int connection) {
         // send response
         sendResponse(connection, response);
 
-        // close the connection
-        close(connection);
+        if(needCloseConnection) {
+            // close the connection
+            close(connection);
+        }
 
         return;
     }
@@ -315,9 +316,8 @@ void handleRequest(int connection) {
         std::cout << "compressed size: " << contentString.length() << std::endl;
     }
 
-    //-------return content-------
+    // -------return content-------
 
-    // TODO: construct response header
     std::string response = "HTTP/1.1 200 OK\r\n";
     response += "Date: " + currentTime() + "\r\n";
     response += "Server: Zoe Server (0.0.1)\r\n";
@@ -335,6 +335,7 @@ void handleRequest(int connection) {
         std::cout << "start chunking" << std::endl;
     }
 
+    // Chunked Transfer
     int chunkSize = 1024 * 1024;
     int chunkID = 0;
     do {
@@ -367,7 +368,7 @@ void handleRequest(int connection) {
         close(connection);
         return;
     } else {
-        handleRequest(connection);
+        handleRequest(connection); // keep alive
     }
 }
 
@@ -422,12 +423,12 @@ int main(int argc, char **argv) {
         if (connfd < 0) {
             std::cout << "Error: failed to start a new connection to client." << std::endl;
             std::cout << "\tClient address: " << IPstring << std::endl;
-            return 0;
+            continue;
         }
 
         /* print client (remote side) address (IP : port) */
         /* inet_ntop: converts the network address into a character std::string */
-        /* https://www.systutorials.com/docs/linux/man/3-inet_ntop/ */
+        /* https:// www.systutorials.com/docs/linux/man/3-inet_ntop/ */
         inet_ntop(AF_INET, &(clientAddress.sin_addr), IPstring, INET_ADDRSTRLEN);
         std::cout << "Incoming connection from " << IPstring << ": " << ntohs(clientAddress.sin_port) << std::endl;
         std::cout << "Start new thread..." << std::endl;
